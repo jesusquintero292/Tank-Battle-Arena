@@ -1,0 +1,147 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+:root{color-scheme:dark;--bg:#0b1018;--panel:#131c28;--line:#263548;--text:#f3f6fb;--muted:#9baabd;--green:#a8f06a;--blue:#6eb8ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -20%,#20364a 0,#0b1018 48%);color:var(--text);font-family:Inter,Arial,sans-serif;min-height:100vh}
+.shell{max-width:980px;margin:auto;padding:24px 18px 32px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}.logo{font:800 27px 'Barlow Condensed',sans-serif;letter-spacing:1px}.logo span{color:var(--green)}.tag,.eyebrow{font-size:11px;letter-spacing:2px;color:var(--green);font-weight:700}
+.panel{background:rgba(19,28,40,.96);border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:0 20px 70px #0005;max-width:700px;margin:0 auto}
+h1,h2,h3{font-family:'Barlow Condensed',Impact,sans-serif;margin:8px 0 12px}h1{font-size:52px}h2{font-size:34px}h3{font-size:21px}.muted{color:var(--muted);line-height:1.5}.small{font-size:12px}label{display:block;margin:22px 0 8px;font-size:13px;color:#cbd5e1}
+input{width:100%;padding:14px 15px;border-radius:10px;border:1px solid var(--line);background:#0b131e;color:white;font:inherit;outline:none}input:focus{border-color:var(--green)}
+button{border:1px solid var(--line);background:#1d2b3c;color:white;padding:13px 18px;border-radius:10px;font:700 14px Inter;cursor:pointer}button:hover{filter:brightness(1.15)}button:disabled{opacity:.5;cursor:not-allowed}.primary{background:var(--green);border-color:var(--green);color:#14200d}.secondary{margin-top:14px;background:#253448}
+.actions{margin-top:12px}.actions button{width:100%}.join-row{display:flex;gap:10px;margin-top:12px}.join-row input{min-width:0;text-transform:uppercase}.error{color:#ff8585;min-height:18px;font-size:13px}
+.hidden{display:none!important}.room-code{font:800 42px 'Barlow Condensed';letter-spacing:8px;color:var(--green);background:#0b131e;border:1px dashed #527044;border-radius:12px;text-align:center;padding:16px;margin:18px 0}
+.players{padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.players li{background:#0b131e;padding:11px;border:1px solid var(--line);border-radius:9px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px}
+.game-panel{max-width:900px}.game-head{display:flex;justify-content:space-between;align-items:center}.counter{color:var(--green);font-weight:800;font-size:12px;letter-spacing:1px}
+canvas{display:block;width:100%;height:auto;background:#101a25;border:1px solid #31445a;border-radius:12px;touch-action:none}
+.controls{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;margin:10px 0;flex-wrap:wrap}
+.timer{font:800 54px 'Barlow Condensed';color:var(--green);text-align:center;margin:14px}.answers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.answers button{text-align:left;min-height:58px}.answers button.correct{border-color:var(--green);background:#1c3824}.answers button.wrong{border-color:#ff7373;background:#3b2024}
+.scores{padding-left:25px}.scores li{padding:10px;border-bottom:1px solid var(--line)}footer{text-align:center;color:#65758a;font-size:11px;margin:25px}footer span{color:var(--green)}
+@media(max-width:560px){.shell{padding:16px 10px}.panel{padding:20px}h1{font-size:42px}.answers{grid-template-columns:1fr}.top{align-items:flex-start;gap:8px}.tag{font-size:9px}}
+
+/* =====================================
+   ADAPTACIÓN PARA CELULARES
+===================================== */
+
+html, body {
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+#arena {
+  display: block;
+  width: 100%;
+  max-width: 1200px;
+  height: auto;
+  aspect-ratio: 1200 / 750;
+
+  touch-action: none;
+
+  user-select: none;
+  -webkit-user-select: none;
+
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Evitar gestos del navegador durante el juego */
+canvas, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* CELULAR EN VERTICAL */
+@media screen and (max-width: 900px) and (orientation: portrait) {
+  body::after {
+    content: "📱 Gira tu celular horizontalmente para jugar Tank Battle";
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: #101827;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 30px;
+    font-size: 22px;
+    font-weight: bold;
+  }
+}
+
+/* CELULAR EN HORIZONTAL */
+@media screen and (max-width: 900px) and (orientation: landscape) {
+  body {
+    overflow: auto;
+  }
+
+  .shell {
+    width: 100%;
+    max-width: 100%;
+    padding: 5px;
+  }
+
+  .top {
+    margin-bottom: 5px;
+  }
+
+  .game-panel {
+    width: 100%;
+    max-width: 100%;
+    padding: 6px;
+    border-radius: 8px;
+  }
+
+  .game-head {
+    margin-bottom: 4px;
+  }
+
+  .game-head h2 {
+    font-size: 22px;
+    margin: 2px;
+  }
+
+  #arena {
+    width: 100%;
+    max-height: 72vh;
+    object-fit: contain;
+  }
+
+  .controls {
+    margin: 4px 0;
+    font-size: 10px;
+  }
+
+  button {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .answers {
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+  }
+
+  .answers button {
+    min-height: 48px;
+    padding: 9px;
+    font-size: 12px;
+  }
+
+  .timer {
+    font-size: 38px;
+    margin: 5px;
+  }
+
+  footer {
+    margin: 5px;
+  }
+}
+
+/* PANTALLAS PEQUEÑAS */
+@media screen and (max-width: 560px) {
+  input, button {
+    font-size: 14px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+}

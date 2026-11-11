@@ -1,0 +1,87 @@
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b1018">
+  <title>Tank Battle Arena</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div class="logo">⬢ TANK <span>BATTLE</span></div>
+      <div class="tag">MULTIPLAYER ARENA</div>
+    </header>
+
+    <section id="home" class="panel">
+      <p class="eyebrow">BROWSER GAME · PVP</p>
+      <h1>Enter the arena.</h1>
+      <p class="muted">Crea una sala o únete a tus compañeros con un código.</p>
+      <label>Tu nombre</label>
+      <input id="playerName" maxlength="16" placeholder="Escribe tu nombre" value="Jugador">
+      <div class="actions">
+        <button id="createBtn" class="primary">Crear sala</button>
+      </div>
+      <div class="join-row">
+        <input id="roomCode" maxlength="5" placeholder="CÓDIGO">
+        <button id="joinBtn">Unirse</button>
+      </div>
+      <p id="homeError" class="error"></p>
+    </section>
+
+    <section id="lobby" class="panel hidden">
+      <p class="eyebrow">WAITING ROOM</p>
+      <h2>Sala <strong id="roomCodeLabel">-----</strong></h2>
+      <p class="muted">Comparte este código con tus compañeros.</p>
+      <div class="room-code" id="bigCode">-----</div>
+      <h3>Jugadores conectados</h3>
+      <ul id="playerList" class="players"></ul>
+      <button id="startBtn" class="primary hidden">Iniciar batalla</button>
+      <p id="lobbyHint" class="muted small">Esperando al anfitrión...</p>
+    </section>
+
+    <section id="gamePanel" class="panel game-panel hidden">
+      <div class="game-head">
+        <div>
+          <p class="eyebrow">LIVE MATCH</p>
+          <h2>Battle arena</h2>
+        </div>
+        <div id="aliveCount" class="counter">0 ALIVE</div>
+      </div>
+
+      <canvas id="arena" width="1200" height="750"></canvas>
+
+      <div class="controls">
+        <span>PC: clic para disparar y mantener para avanzar.</span>
+        <span>Móvil: toca y mantén pulsada la arena.</span>
+      </div>
+
+      <button id="leaveGameBtn" class="secondary">Salir de la partida</button>
+    </section>
+
+    <section id="questionPanel" class="panel hidden">
+      <p class="eyebrow">WINNER'S QUESTION</p>
+      <h2 id="winnerTitle">¡Tenemos un ganador!</h2>
+      <p class="muted">Responde antes de que termine el tiempo.</p>
+      <div id="timer" class="timer">20</div>
+      <h3 id="questionText">Pregunta de ejemplo: ¿Cuál fue el tema principal de la exposición?</h3>
+      <div id="answers" class="answers"></div>
+      <p id="questionFeedback" class="muted"></p>
+    </section>
+
+    <section id="scorePanel" class="panel hidden">
+      <p class="eyebrow">LEADERBOARD</p>
+      <h2>Clasificación</h2>
+      <ol id="scoreList" class="scores"></ol>
+      <button id="backLobbyBtn" class="primary">Volver a la sala</button>
+    </section>
+
+    <footer>Tank Battle Arena <span>·</span> Made for English class</footer>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
