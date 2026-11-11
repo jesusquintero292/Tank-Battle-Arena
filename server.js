@@ -6,7 +6,12 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+const io = new Server(server, {
+  transports: ["websocket", "polling"],
+  pingInterval: 25000,
+  pingTimeout: 20000
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -23,16 +28,18 @@ const WIDTH = 1200;
 const HEIGHT = 750;
 
 const TICK_RATE = 30;
+const STATE_INTERVAL = 50;
+
 const BULLET_RADIUS = 5;
 const TANK_RADIUS = 17;
+
+const PLAYER_STATE_MIN_INTERVAL = 35;
 
 // =====================================
 // MAPAS DE LAS SEIS RONDAS
 // =====================================
 
 const ROUND_OBSTACLES = [
-
-  // RONDA 1: CAMPO DE CAJAS
   [
     { x: 270, y: 145, w: 65, h: 65, type: "crate" },
     { x: 865, y: 145, w: 65, h: 65, type: "crate" },
@@ -41,8 +48,6 @@ const ROUND_OBSTACLES = [
     { x: 555, y: 320, w: 65, h: 65, type: "crate" },
     { x: 650, y: 320, w: 65, h: 65, type: "crate" }
   ],
-
-  // RONDA 2: LABERINTO DE MUROS
   [
     { x: 250, y: 100, w: 30, h: 220, type: "wall" },
     { x: 250, y: 430, w: 30, h: 220, type: "wall" },
@@ -53,8 +58,6 @@ const ROUND_OBSTACLES = [
     { x: 950, y: 100, w: 30, h: 220, type: "wall" },
     { x: 950, y: 430, w: 30, h: 220, type: "wall" }
   ],
-
-  // RONDA 3: CAMPO DE BARRILES
   [
     { x: 240, y: 170, w: 45, h: 45, type: "barrel" },
     { x: 430, y: 115, w: 45, h: 45, type: "barrel" },
@@ -67,8 +70,6 @@ const ROUND_OBSTACLES = [
     { x: 810, y: 575, w: 45, h: 45, type: "barrel" },
     { x: 1000, y: 520, w: 45, h: 45, type: "barrel" }
   ],
-
-  // RONDA 4: ROCAS Y LAGUNAS
   [
     { x: 230, y: 170, w: 130, h: 85, type: "water" },
     { x: 510, y: 100, w: 100, h: 75, type: "rock" },
@@ -78,8 +79,6 @@ const ROUND_OBSTACLES = [
     { x: 850, y: 500, w: 130, h: 85, type: "rock" },
     { x: 555, y: 320, w: 90, h: 90, type: "rock" }
   ],
-
-  // RONDA 5: PASILLOS Y BARRERAS
   [
     { x: 160, y: 150, w: 300, h: 30, type: "barrier" },
     { x: 740, y: 150, w: 300, h: 30, type: "barrier" },
@@ -90,8 +89,6 @@ const ROUND_OBSTACLES = [
     { x: 370, y: 320, w: 100, h: 35, type: "barrier" },
     { x: 730, y: 320, w: 100, h: 35, type: "barrier" }
   ],
-
-  // RONDA 6: BATALLA FINAL
   [
     { x: 250, y: 150, w: 65, h: 65, type: "crate" },
     { x: 885, y: 150, w: 65, h: 65, type: "crate" },
@@ -107,7 +104,7 @@ const ROUND_OBSTACLES = [
 ];
 
 // =====================================
-// CREAR CÓDIGOS DE SALA
+// UTILIDADES
 // =====================================
 
 function makeCode() {
@@ -123,10 +120,6 @@ function makeCode() {
   return code;
 }
 
-// =====================================
-// INFORMACIÓN PÚBLICA
-// =====================================
-
 function publicRoom(room) {
   return {
     code: room.code,
@@ -135,7 +128,6 @@ function publicRoom(room) {
     status: room.status,
     round: room.round,
     spectators: 1,
-
     players: [...room.players.values()].map(p => ({
       id: p.id,
       name: p.name,
@@ -163,6 +155,12 @@ function emitStates(room) {
       alive: p.alive
     }))
   );
+
+  room.stateDirty = false;
+}
+
+function markStatesDirty(room) {
+  room.stateDirty = true;
 }
 
 // =====================================
@@ -170,36 +168,23 @@ function emitStates(room) {
 // =====================================
 
 function circleHitsRect(x, y, radius, rect) {
-  if (
-    !rect ||
-    !Number.isFinite(rect.x) ||
-    !Number.isFinite(rect.y) ||
-    !Number.isFinite(rect.w) ||
-    !Number.isFinite(rect.h)
-  ) {
-    return false;
-  }
+  const closestX = Math.max(rect.x, Math.min(x, rect.x + rect.w));
+  const closestY = Math.max(rect.y, Math.min(y, rect.y + rect.h));
 
-  const closestX = Math.max(
-    rect.x,
-    Math.min(x, rect.x + rect.w)
-  );
+  const dx = x - closestX;
+  const dy = y - closestY;
 
-  const closestY = Math.max(
-    rect.y,
-    Math.min(y, rect.y + rect.h)
-  );
-
-  return Math.hypot(
-    x - closestX,
-    y - closestY
-  ) <= radius;
+  return dx * dx + dy * dy <= radius * radius;
 }
 
 function blocked(room, x, y, radius) {
-  return room.obstacles.some(obstacle =>
-    circleHitsRect(x, y, radius, obstacle)
-  );
+  for (const obstacle of room.obstacles) {
+    if (circleHitsRect(x, y, radius, obstacle)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function segmentHitsRect(x1, y1, x2, y2, rect, radius) {
@@ -241,31 +226,30 @@ function segmentHitsRect(x1, y1, x2, y2, rect, radius) {
   return true;
 }
 
-function pointSegmentDistance(px, py, x1, y1, x2, y2) {
+function pointSegmentDistanceSquared(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
 
   const lengthSquared = dx * dx + dy * dy;
 
   if (lengthSquared === 0) {
-    return Math.hypot(px - x1, py - y1);
+    const ox = px - x1;
+    const oy = py - y1;
+    return ox * ox + oy * oy;
   }
 
   const t = Math.max(
     0,
-    Math.min(
-      1,
-      ((px - x1) * dx + (py - y1) * dy) / lengthSquared
-    )
+    Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSquared)
   );
 
   const closestX = x1 + t * dx;
   const closestY = y1 + t * dy;
 
-  return Math.hypot(
-    px - closestX,
-    py - closestY
-  );
+  const ox = px - closestX;
+  const oy = py - closestY;
+
+  return ox * ox + oy * oy;
 }
 
 // =====================================
@@ -280,32 +264,25 @@ function finishRound(room) {
   if (alive.length > 1) return;
 
   room.status = "question";
-  room.bullets = [];
+  room.bullets.length = 0;
 
-  room.winnerId = alive.length === 1
-    ? alive[0].id
-    : null;
+  room.winnerId = alive.length === 1 ? alive[0].id : null;
 
   io.to(room.code).emit(
     "game:finished",
     alive.length === 1
-      ? {
-          id: alive[0].id,
-          name: alive[0].name
-        }
+      ? { id: alive[0].id, name: alive[0].name }
       : null
   );
 
+  emitStates(room);
   emitRoom(room);
 
   if (alive.length === 0) {
     room.status = "transition";
 
     setTimeout(() => {
-      if (
-        !rooms.has(room.code) ||
-        room.status !== "transition"
-      ) return;
+      if (!rooms.has(room.code) || room.status !== "transition") return;
 
       room.round += 1;
       startRound(room);
@@ -330,18 +307,15 @@ function startRound(room) {
       }));
 
     io.to(room.code).emit("match:finished", ranking);
-
     emitRoom(room);
     return;
   }
 
   room.status = "playing";
   room.winnerId = null;
-  room.bullets = [];
+  room.bullets.length = 0;
 
-  room.obstacles = ROUND_OBSTACLES[
-    room.round - 1
-  ].map(o => ({ ...o }));
+  room.obstacles = ROUND_OBSTACLES[room.round - 1].map(o => ({ ...o }));
 
   const positions = [
     { x: 75, y: 75 },
@@ -355,10 +329,9 @@ function startRound(room) {
   ];
 
   [...room.players.values()].forEach((p, i) => {
-    p.alive = true;
-
     const position = positions[i];
 
+    p.alive = true;
     p.x = position.x;
     p.y = position.y;
 
@@ -366,6 +339,8 @@ function startRound(room) {
       HEIGHT / 2 - p.y,
       WIDTH / 2 - p.x
     );
+
+    p.lastStateAt = 0;
   });
 
   io.to(room.code).emit("game:round", {
@@ -387,11 +362,9 @@ function startRound(room) {
 io.on("connection", socket => {
   console.log("Usuario conectado:", socket.id);
 
-  // -----------------------------------
-  // CREAR SALA COMO ADMINISTRADOR
-  // -----------------------------------
+  // CREAR SALA: ADMINISTRADOR ESPECTADOR
 
-  socket.on("room:create", ({ name }) => {
+  socket.on("room:create", ({ name } = {}) => {
     const cleanName =
       String(name || "Administrador").trim().slice(0, 16) || "Administrador";
 
@@ -404,13 +377,10 @@ io.on("connection", socket => {
       status: "lobby",
       round: 1,
       winnerId: null,
-
-      // El administrador NO se agrega a players.
       players: new Map(),
-
       bullets: [],
       obstacles: [],
-
+      stateDirty: false,
       colors: [
         "#42d392",
         "#54a6ff",
@@ -439,35 +409,22 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // -----------------------------------
-  // UNIRSE A UNA SALA COMO JUGADOR
-  // -----------------------------------
+  // UNIRSE COMO JUGADOR
 
-  socket.on("room:join", ({ code, name }) => {
-    const normalized =
-      String(code || "").trim().toUpperCase();
-
+  socket.on("room:join", ({ code, name } = {}) => {
+    const normalized = String(code || "").trim().toUpperCase();
     const room = rooms.get(normalized);
 
     if (!room) {
-      return socket.emit(
-        "error:message",
-        "No existe esa sala."
-      );
+      return socket.emit("error:message", "No existe esa sala.");
     }
 
     if (room.status !== "lobby") {
-      return socket.emit(
-        "error:message",
-        "La partida ya comenzó."
-      );
+      return socket.emit("error:message", "La partida ya comenzó.");
     }
 
     if (room.players.size >= MAX_PLAYERS) {
-      return socket.emit(
-        "error:message",
-        "La sala está llena."
-      );
+      return socket.emit("error:message", "La sala está llena.");
     }
 
     const cleanName =
@@ -479,13 +436,12 @@ io.on("connection", socket => {
       id: socket.id,
       name: cleanName,
       color: room.colors[index],
-
       x: 600,
       y: 375,
       angle: Math.random() * Math.PI * 2,
-
       alive: true,
-      score: 0
+      score: 0,
+      lastStateAt: 0
     });
 
     socket.join(normalized);
@@ -502,19 +458,15 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // -----------------------------------
   // INICIAR PARTIDA
-  // -----------------------------------
 
   socket.on("game:start", () => {
     const room = rooms.get(socket.data.roomCode);
 
-    // Solo el administrador puede iniciar.
     if (!room || room.hostId !== socket.id) return;
 
     if (
-      (room.status !== "lobby" &&
-       room.status !== "finished") ||
+      (room.status !== "lobby" && room.status !== "finished") ||
       room.players.size < 2 ||
       room.players.size > MAX_PLAYERS
     ) {
@@ -523,41 +475,46 @@ io.on("connection", socket => {
 
     room.round = 1;
 
-    for (const p of room.players.values()) {
-      p.score = 0;
+    for (const player of room.players.values()) {
+      player.score = 0;
     }
 
     startRound(room);
   });
 
-  // -----------------------------------
-  // MOVIMIENTO DE JUGADORES
-  // -----------------------------------
+  // MOVIMIENTO: RECIBIR POSICIONES SIN EMITIR INMEDIATAMENTE
 
   socket.on("player:state", state => {
     const room = rooms.get(socket.data.roomCode);
 
-    if (!room || room.status !== "playing") return;
+    if (!room || room.status !== "playing" || !state) return;
 
     const player = room.players.get(socket.id);
 
-    // El administrador no tiene tanque.
     if (!player || !player.alive) return;
+
+    const now = Date.now();
+
+    if (now - player.lastStateAt < PLAYER_STATE_MIN_INTERVAL) {
+      return;
+    }
+
+    player.lastStateAt = now;
+
+    const rawX = Number(state.x);
+    const rawY = Number(state.y);
+    const rawAngle = Number(state.angle);
+
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return;
 
     const x = Math.max(
       TANK_RADIUS + 7,
-      Math.min(
-        WIDTH - TANK_RADIUS - 7,
-        Number(state.x) || player.x
-      )
+      Math.min(WIDTH - TANK_RADIUS - 7, rawX)
     );
 
     const y = Math.max(
       TANK_RADIUS + 7,
-      Math.min(
-        HEIGHT - TANK_RADIUS - 7,
-        Number(state.y) || player.y
-      )
+      Math.min(HEIGHT - TANK_RADIUS - 7, rawY)
     );
 
     if (!blocked(room, x, y, TANK_RADIUS)) {
@@ -565,21 +522,19 @@ io.on("connection", socket => {
       player.y = y;
     }
 
-    if (Number.isFinite(Number(state.angle))) {
-      player.angle = Number(state.angle);
+    if (Number.isFinite(rawAngle)) {
+      player.angle = rawAngle;
     }
 
-    emitStates(room);
+    markStatesDirty(room);
   });
 
-  // -----------------------------------
   // DISPARAR
-  // -----------------------------------
 
   socket.on("player:shoot", bullet => {
     const room = rooms.get(socket.data.roomCode);
 
-    if (!room || room.status !== "playing") return;
+    if (!room || room.status !== "playing" || !bullet) return;
 
     const player = room.players.get(socket.id);
 
@@ -588,9 +543,7 @@ io.on("connection", socket => {
     const vx = Number(bullet.vx);
     const vy = Number(bullet.vy);
 
-    if (!Number.isFinite(vx) || !Number.isFinite(vy)) {
-      return;
-    }
+    if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
 
     const speed = Math.hypot(vx, vy);
 
@@ -601,27 +554,15 @@ io.on("connection", socket => {
 
     const newBullet = {
       owner: socket.id,
-
       x: player.x + dx * 22,
       y: player.y + dy * 22,
-
       vx,
       vy,
-
       color: player.color,
       life: 2
     };
 
-    if (
-      room.obstacles.some(o =>
-        circleHitsRect(
-          newBullet.x,
-          newBullet.y,
-          BULLET_RADIUS,
-          o
-        )
-      )
-    ) {
+    if (blocked(room, newBullet.x, newBullet.y, BULLET_RADIUS)) {
       return;
     }
 
@@ -637,30 +578,25 @@ io.on("connection", socket => {
     });
   });
 
-  // -----------------------------------
   // MOSTRAR PREGUNTA
-  // -----------------------------------
 
   socket.on("question:show", question => {
     const room = rooms.get(socket.data.roomCode);
 
     if (!room || room.status !== "question") return;
-    if (room.winnerId !== socket.id) return;
+    if (room.winnerId !== socket.id || !question) return;
 
     io.to(room.code).emit("question:display", {
       q: String(question.q || ""),
-
       a: Array.isArray(question.a)
         ? question.a.slice(0, 4).map(x => String(x))
         : []
     });
   });
 
-  // -----------------------------------
   // RESULTADO DE LA PREGUNTA
-  // -----------------------------------
 
-  socket.on("question:result", ({ correct, elapsed }) => {
+  socket.on("question:result", ({ correct, elapsed } = {}) => {
     const room = rooms.get(socket.data.roomCode);
 
     if (!room || room.status !== "question") return;
@@ -685,28 +621,18 @@ io.on("connection", socket => {
     room.status = "transition";
     room.winnerId = null;
 
-    io.to(room.code).emit(
-      "question:closed",
-      publicRoom(room)
-    );
-
+    io.to(room.code).emit("question:closed", publicRoom(room));
     emitRoom(room);
 
     setTimeout(() => {
-      if (
-        !rooms.has(room.code) ||
-        room.status !== "transition"
-      ) return;
+      if (!rooms.has(room.code) || room.status !== "transition") return;
 
       room.round += 1;
-
       startRound(room);
     }, 3000);
   });
 
-  // -----------------------------------
-  // DESCONECTAR JUGADOR O ADMINISTRADOR
-  // -----------------------------------
+  // DESCONECTAR
 
   socket.on("disconnect", () => {
     console.log("Usuario desconectado:", socket.id);
@@ -716,8 +642,6 @@ io.on("connection", socket => {
 
     if (!room) return;
 
-    // Si se desconecta el administrador,
-    // cerrar la sala para no dejarla sin control.
     if (room.hostId === socket.id) {
       io.to(room.code).emit(
         "room:closed",
@@ -728,15 +652,12 @@ io.on("connection", socket => {
       return;
     }
 
-    // Eliminar al jugador desconectado.
     room.players.delete(socket.id);
 
     room.bullets = room.bullets.filter(
-      b => b.owner !== socket.id
+      bullet => bullet.owner !== socket.id
     );
 
-    // Si se desconecta el ganador mientras debe responder,
-    // avanzar a la siguiente ronda.
     if (
       room.status === "question" &&
       room.winnerId === socket.id
@@ -744,16 +665,10 @@ io.on("connection", socket => {
       room.status = "transition";
       room.winnerId = null;
 
-      io.to(room.code).emit(
-        "question:closed",
-        publicRoom(room)
-      );
+      io.to(room.code).emit("question:closed", publicRoom(room));
 
       setTimeout(() => {
-        if (
-          !rooms.has(room.code) ||
-          room.status !== "transition"
-        ) return;
+        if (!rooms.has(room.code) || room.status !== "transition") return;
 
         room.round += 1;
         startRound(room);
@@ -763,22 +678,34 @@ io.on("connection", socket => {
     emitRoom(room);
 
     if (room.status === "playing") {
-      emitStates(room);
+      markStatesDirty(room);
       finishRound(room);
     }
-
-    // Si no queda ningún jugador, conservar la sala
-    // mientras el administrador siga conectado.
   });
 });
+
+// =====================================
+// ENVÍO AGRUPADO DE ESTADOS
+// =====================================
+
+setInterval(() => {
+  for (const room of rooms.values()) {
+    if (room.status !== "playing" || !room.stateDirty) continue;
+    emitStates(room);
+  }
+}, STATE_INTERVAL);
 
 // =====================================
 // MOVIMIENTO DE BALAS Y COLISIONES
 // =====================================
 
+const bulletStep = TICK_RATE / 1000;
+const hitDistanceSquared =
+  (TANK_RADIUS + BULLET_RADIUS) ** 2;
+
 setInterval(() => {
   for (const room of rooms.values()) {
-    if (room.status !== "playing") continue;
+    if (room.status !== "playing" || room.bullets.length === 0) continue;
 
     for (let i = room.bullets.length - 1; i >= 0; i--) {
       const bullet = room.bullets[i];
@@ -791,42 +718,44 @@ setInterval(() => {
       const oldX = bullet.x;
       const oldY = bullet.y;
 
-      const newX = oldX + bullet.vx * (TICK_RATE / 1000);
-      const newY = oldY + bullet.vy * (TICK_RATE / 1000);
+      const newX = oldX + bullet.vx * bulletStep;
+      const newY = oldY + bullet.vy * bulletStep;
 
-      bullet.life -= TICK_RATE / 1000;
+      bullet.life -= bulletStep;
 
       let removeBullet = false;
       let playerHit = false;
 
-      // 1. Comprobar obstáculos.
-      const hitObstacle = room.obstacles.some(o =>
-        segmentHitsRect(
-          oldX,
-          oldY,
-          newX,
-          newY,
-          o,
-          BULLET_RADIUS
-        )
-      );
+      // Obstáculos
 
-      if (hitObstacle) {
-        removeBullet = true;
+      for (const obstacle of room.obstacles) {
+        if (
+          segmentHitsRect(
+            oldX,
+            oldY,
+            newX,
+            newY,
+            obstacle,
+            BULLET_RADIUS
+          )
+        ) {
+          removeBullet = true;
+          break;
+        }
       }
 
-      // 2. Comprobar tanques.
+      // Tanques
+
       if (!removeBullet) {
         for (const target of room.players.values()) {
           if (
-            !target ||
             !target.alive ||
             target.id === bullet.owner
           ) {
             continue;
           }
 
-          const distance = pointSegmentDistance(
+          const distanceSquared = pointSegmentDistanceSquared(
             target.x,
             target.y,
             oldX,
@@ -835,27 +764,21 @@ setInterval(() => {
             newY
           );
 
-          if (distance <= TANK_RADIUS + BULLET_RADIUS) {
+          if (distanceSquared <= hitDistanceSquared) {
             target.alive = false;
-
             removeBullet = true;
             playerHit = true;
-
-            emitStates(room);
-            emitRoom(room);
-
+            markStatesDirty(room);
             break;
           }
         }
       }
 
-      // 3. Actualizar posición de la bala.
       if (!removeBullet) {
         bullet.x = newX;
         bullet.y = newY;
       }
 
-      // 4. Eliminar balas agotadas o fuera del mapa.
       if (
         removeBullet ||
         bullet.life <= 0 ||
@@ -867,13 +790,11 @@ setInterval(() => {
         room.bullets.splice(i, 1);
       }
 
-      // 5. Comprobar si terminó la ronda.
       if (playerHit) {
+        emitRoom(room);
         finishRound(room);
 
-        if (room.status !== "playing") {
-          break;
-        }
+        if (room.status !== "playing") break;
       }
     }
   }
@@ -886,7 +807,5 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Tank Battle listo en el puerto ${PORT}`
-  );
+  console.log(`Tank Battle listo en el puerto ${PORT}`);
 });
