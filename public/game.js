@@ -4,12 +4,22 @@ const socket = io();
 const $ = id => document.getElementById(id);
 const screens = ["home", "lobby", "gamePanel", "questionPanel", "scorePanel"];
 
-// Configuración del juego
+// =====================================
+// CONFIGURACIÓN
+// =====================================
+
 const MAX_PLAYERS = 8;
 const TOTAL_ROUNDS = 6;
 
 const ARENA_WIDTH = 1200;
 const ARENA_HEIGHT = 750;
+
+const TANK_RADIUS = 17;
+const TANK_SPEED = 135;
+const ROTATION_SPEED = 2.2;
+
+const STATE_SEND_INTERVAL = 50;
+const MAX_FRAME_TIME = 0.04;
 
 let roomCode = null;
 let playerId = null;
@@ -27,6 +37,8 @@ let rotationDirection = 1;
 let activePointerId = null;
 
 let lastTime = 0;
+let lastStateSent = 0;
+
 let questionTimer = null;
 let questionStart = 0;
 let questionAnswered = false;
@@ -38,79 +50,49 @@ let obstacles = [];
 const canvas = $("arena");
 const ctx = canvas.getContext("2d");
 
-// Tamaño real del mapa
 canvas.width = ARENA_WIDTH;
 canvas.height = ARENA_HEIGHT;
 
-// Preguntas de ejemplo: puedes reemplazarlas después
+// =====================================
+// PREGUNTAS
+// =====================================
 
 const QUESTIONS = [
   {
     q: 'What is the noun paired with the adjective "ASYNCHRONOUS"?',
-    a: [
-      "Teamwork",
-      "Backlog",
-      "Communication",
-      "Deployment"
-    ],
+    a: ["Teamwork", "Backlog", "Communication", "Deployment"],
     correct: 2
   },
   {
     q: 'Which adjective is used in the presentation to describe the noun "PROJECT"?',
-    a: [
-      "Flawless",
-      "High-risk",
-      "Approved",
-      "Custom"
-    ],
+    a: ["Flawless", "High-risk", "Approved", "Custom"],
     correct: 1
   },
   {
     q: 'According to the presentation, what is the adjective associated with the noun "DEVELOPER"?',
-    a: [
-      "Skilled",
-      "High-risk",
-      "Seamless",
-      "Cluttered"
-    ],
+    a: ["Skilled", "High-risk", "Seamless", "Cluttered"],
     correct: 0
   },
   {
     q: 'According to the presentation, what is the adjective used for the noun "SOLUTION"?',
-    a: [
-      "Custom",
-      "Overloaded",
-      "Unresolved",
-      "Approved"
-    ],
+    a: ["Custom", "Overloaded", "Unresolved", "Approved"],
     correct: 0
   },
   {
     q: 'In the presentation, what adjective describes the noun "BACKLOG"?',
-    a: [
-      "Overloaded",
-      "Unresolved",
-      "Cluttered",
-      "Skilled"
-    ],
+    a: ["Overloaded", "Unresolved", "Cluttered", "Skilled"],
     correct: 2
   },
   {
     q: 'What is the adjective corresponding to the noun "DEPLOYMENT"?',
-    a: [
-      "Flawless",
-      "Seamless",
-      "Approved",
-      "Custom"
-    ],
+    a: ["Flawless", "Seamless", "Approved", "Custom"],
     correct: 0
   }
 ];
 
-
-// -------------------------------------
+// =====================================
 // PANTALLAS Y SALA
-// -------------------------------------
+// =====================================
 
 function show(id) {
   screens.forEach(s => {
@@ -172,6 +154,19 @@ socket.on("room:update", room => {
   renderRoom(room);
 });
 
+socket.on("room:closed", message => {
+  running = false;
+  clearInterval(questionTimer);
+
+  moveHeld = false;
+  activePointerId = null;
+
+  $("homeError").textContent =
+    message || "La sala se ha cerrado.";
+
+  show("home");
+});
+
 function renderRoom(room) {
   $("roomCodeLabel").textContent = room.code;
   $("bigCode").textContent = room.code;
@@ -182,12 +177,13 @@ function renderRoom(room) {
 
     li.innerHTML =
       `<span class="dot" style="background:${p.color}"></span>` +
-      `${escapeHtml(p.name)} ${p.id === room.hostId ? "(host)" : ""} · ${p.score} pts`;
+      `${escapeHtml(p.name)} · ${p.score} pts`;
 
     $("playerList").appendChild(li);
   });
 
   $("startBtn").classList.toggle("hidden", !isHost);
+
   $("startBtn").disabled =
     room.players.length < 2 ||
     room.players.length > MAX_PLAYERS;
@@ -208,9 +204,9 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// -------------------------------------
+// =====================================
 // RONDAS Y ESTADOS
-// -------------------------------------
+// =====================================
 
 socket.on("game:round", data => {
   currentRound = data.round;
@@ -219,8 +215,12 @@ socket.on("game:round", data => {
   bullets = [];
   currentQuestion = null;
   questionAnswered = false;
+
+  clearInterval(questionTimer);
+
   moveHeld = false;
   activePointerId = null;
+  lastStateSent = 0;
 
   $("aliveCount").textContent =
     `RONDA ${currentRound}/${TOTAL_ROUNDS}`;
@@ -231,26 +231,31 @@ socket.on("game:started", () => {
 
   moveHeld = false;
   activePointerId = null;
+
   bullets = [];
   running = true;
+
   lastTime = performance.now();
+  lastStateSent = 0;
 
   show("gamePanel");
 
   requestAnimationFrame(loop);
 });
 
-// Actualizaciones de los tanques desde el servidor
+// Recibir posiciones de los tanques
+
 socket.on("game:states", states => {
   players = states;
 
-  myTank = players.find(p => p.id === playerId) || myTank;
+  myTank = players.find(p => p.id === playerId) || null;
 
   $("aliveCount").textContent =
     `RONDA ${currentRound}/${TOTAL_ROUNDS} · ${players.filter(p => p.alive).length} ALIVE`;
 });
 
 // Recibir disparos
+
 socket.on("game:bullet", b => {
   bullets.push({
     ...b,
@@ -258,20 +263,26 @@ socket.on("game:bullet", b => {
   });
 });
 
-// -------------------------------------
+// =====================================
 // FINAL DE BATALLA
-// -------------------------------------
+// =====================================
 
 socket.on("game:finished", winner => {
   running = false;
+
   moveHeld = false;
   activePointerId = null;
+
+  clearInterval(questionTimer);
 
   show("questionPanel");
 
   $("answers").innerHTML = "";
   $("questionFeedback").textContent = "";
   $("timer").textContent = "20";
+
+  currentQuestion = null;
+  questionAnswered = false;
 
   if (winner) {
     $("winnerTitle").textContent =
@@ -297,10 +308,15 @@ socket.on("game:finished", winner => {
   }
 });
 
-// Mostrar la pregunta a los demás jugadores
+// =====================================
+// PREGUNTA PARA TODOS
+// =====================================
+
 socket.on("question:display", question => {
-  // El ganador ya tiene su pregunta y sus botones activos
+  // El ganador ya tiene sus botones y cronómetro propios.
   if (currentQuestion) return;
+
+  clearInterval(questionTimer);
 
   $("questionText").textContent = question.q;
   $("answers").innerHTML = "";
@@ -315,10 +331,31 @@ socket.on("question:display", question => {
 
     $("answers").appendChild(btn);
   });
+
+  // Cronómetro visual para los espectadores.
+  // El ganador mantiene su propio cronómetro.
+  let remaining = 20;
+
+  $("timer").textContent = remaining;
+
+  questionTimer = setInterval(() => {
+    remaining = Math.max(0, remaining - 1);
+
+    $("timer").textContent = remaining;
+
+    if (remaining <= 0) {
+      clearInterval(questionTimer);
+    }
+  }, 1000);
 });
 
-// Actualizar clasificación
+// =====================================
+// CLASIFICACIÓN
+// =====================================
+
 socket.on("question:closed", room => {
+  clearInterval(questionTimer);
+
   roomData = room;
 
   renderScores(room);
@@ -326,9 +363,9 @@ socket.on("question:closed", room => {
   show("scorePanel");
 });
 
-// Clasificación final
 socket.on("match:finished", ranking => {
   running = false;
+
   moveHeld = false;
   activePointerId = null;
 
@@ -351,9 +388,26 @@ socket.on("match:finished", ranking => {
   $("aliveCount").textContent = "PARTIDA FINALIZADA";
 });
 
-// -------------------------------------
+function renderScores(room) {
+  const list = $("scoreList");
+
+  list.innerHTML = "";
+
+  [...room.players]
+    .sort((a, b) => b.score - a.score)
+    .forEach((p, index) => {
+      const li = document.createElement("li");
+
+      li.textContent =
+        `${index + 1}. ${p.name} — ${p.score} puntos`;
+
+      list.appendChild(li);
+    });
+}
+
+// =====================================
 // PREGUNTAS Y PUNTUACIÓN
-// -------------------------------------
+// =====================================
 
 function startQuestion() {
   currentQuestion = QUESTIONS[currentRound - 1];
@@ -429,37 +483,19 @@ function answerQuestion(index, button) {
     ? `¡Correcto! Tiempo: ${elapsed.toFixed(1)} s.`
     : "Respuesta incorrecta o tiempo agotado. 0 puntos.";
 
-  // El ganador puede ser cualquier jugador
   socket.emit("question:result", {
     correct,
     elapsed
   });
 }
 
-function renderScores(room) {
-  const list = $("scoreList");
-
-  list.innerHTML = "";
-
-  [...room.players]
-    .sort((a, b) => b.score - a.score)
-    .forEach((p, index) => {
-      const li = document.createElement("li");
-
-      li.textContent =
-        `${index + 1}. ${p.name} — ${p.score} puntos`;
-
-      list.appendChild(li);
-    });
-}
-
-// -------------------------------------
+// =====================================
 // COLISIONES CON OBSTÁCULOS
-// -------------------------------------
+// =====================================
 
 function hitsObstacle(x, y, radius) {
-  return obstacles.some(o => {
-    if (!o) return false;
+  for (const o of obstacles) {
+    if (!o) continue;
 
     const closestX = Math.max(
       o.x,
@@ -471,16 +507,20 @@ function hitsObstacle(x, y, radius) {
       Math.min(y, o.y + o.h)
     );
 
-    return Math.hypot(
-      x - closestX,
-      y - closestY
-    ) <= radius;
-  });
+    const dx = x - closestX;
+    const dy = y - closestY;
+
+    if (dx * dx + dy * dy <= radius * radius) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
-// -------------------------------------
+// =====================================
 // CONTROLES DE LOS TANQUES
-// -------------------------------------
+// =====================================
 
 function pointerDown(e) {
   e.preventDefault();
@@ -492,27 +532,27 @@ function pointerDown(e) {
   moveHeld = true;
   activePointerId = e.pointerId;
 
-  // Mantener la dirección actual del tanque
   moveAngle = myTank.angle;
 
-  // Cambiar el sentido del giro para el siguiente movimiento
   rotationDirection *= -1;
 
-  // Disparar una sola vez por pulsación
+  // Disparar una sola vez por pulsación.
+
   socket.emit("player:shoot", {
     vx: Math.cos(moveAngle) * 360,
     vy: Math.sin(moveAngle) * 360
   });
 
-  // Mantener el control aunque el dedo salga del canvas
   try {
     canvas.setPointerCapture(e.pointerId);
   } catch {}
 }
 
 function pointerUp(e) {
-  // Ignorar la liberación de otro dedo/puntero
-  if (activePointerId !== null && e.pointerId !== activePointerId) {
+  if (
+    activePointerId !== null &&
+    e.pointerId !== activePointerId
+  ) {
     return;
   }
 
@@ -520,9 +560,10 @@ function pointerUp(e) {
   activePointerId = null;
 }
 
-// Controles para mouse, lápiz y pantallas táctiles
-// Evitar que aparezca el menú de Google al mantener pulsado
-canvas.addEventListener("pointerdown", pointerDown);  
+// Eventos del canvas
+
+canvas.addEventListener("pointerdown", pointerDown);
+
 canvas.addEventListener("contextmenu", e => {
   e.preventDefault();
 });
@@ -534,17 +575,18 @@ canvas.addEventListener("selectstart", e => {
 canvas.addEventListener("dragstart", e => {
   e.preventDefault();
 });
+
 canvas.addEventListener("pointerup", pointerUp);
 canvas.addEventListener("pointercancel", pointerUp);
 canvas.addEventListener("lostpointercapture", pointerUp);
 
-// Detener el tanque si se pierde el foco de la ventana
+// Evitar movimiento accidental al perder el foco.
+
 window.addEventListener("blur", () => {
   moveHeld = false;
   activePointerId = null;
 });
 
-// Detener el tanque si se cambia de aplicación o pestaña
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     moveHeld = false;
@@ -552,43 +594,39 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// -------------------------------------
-// BUCLE PRINCIPAL
-// -------------------------------------
+// =====================================
+// BUCLE PRINCIPAL OPTIMIZADO
+// =====================================
 
 function loop(now) {
   if (!running) return;
 
   const dt = Math.min(
-    0.04,
-    (now - lastTime) / 1000
+    MAX_FRAME_TIME,
+    Math.max(0, (now - lastTime) / 1000)
   );
 
   lastTime = now;
 
   if (myTank && myTank.alive) {
-
     if (moveHeld) {
-      // Avanzar en línea recta
       myTank.angle = moveAngle;
 
       const nextX =
-        myTank.x + Math.cos(moveAngle) * 135 * dt;
+        myTank.x + Math.cos(moveAngle) * TANK_SPEED * dt;
 
       const nextY =
-        myTank.y + Math.sin(moveAngle) * 135 * dt;
+        myTank.y + Math.sin(moveAngle) * TANK_SPEED * dt;
 
-      if (!hitsObstacle(nextX, nextY, 17)) {
+      if (!hitsObstacle(nextX, nextY, TANK_RADIUS)) {
         myTank.x = nextX;
         myTank.y = nextY;
       }
 
     } else {
-      // Girar cuando no se está avanzando
-      myTank.angle += rotationDirection * 2.2 * dt;
+      myTank.angle += rotationDirection * ROTATION_SPEED * dt;
     }
 
-    // Límites del mapa ampliado
     myTank.x = Math.max(
       24,
       Math.min(ARENA_WIDTH - 24, myTank.x)
@@ -599,54 +637,64 @@ function loop(now) {
       Math.min(ARENA_HEIGHT - 24, myTank.y)
     );
 
-    // Enviar posición al servidor
-    socket.emit("player:state", {
-      x: myTank.x,
-      y: myTank.y,
-      angle: myTank.angle,
-      direction: rotationDirection
-    });
+    // Enviar posición solo cada 50 ms.
+    // La animación continúa funcionando a la velocidad normal.
+
+    if (now - lastStateSent >= STATE_SEND_INTERVAL) {
+      socket.emit("player:state", {
+        x: myTank.x,
+        y: myTank.y,
+        angle: myTank.angle,
+        direction: rotationDirection
+      });
+
+      lastStateSent = now;
+    }
   }
 
-  // Movimiento visual de las balas
-  bullets.forEach(b => {
+  // Actualizar balas visuales.
+
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.life -= dt;
-  });
 
-  // Desaparecer al chocar con obstáculos o salir del mapa
-  bullets = bullets.filter(b =>
-    b.life > 0 &&
-    b.x > 0 &&
-    b.x < ARENA_WIDTH &&
-    b.y > 0 &&
-    b.y < ARENA_HEIGHT &&
-    !hitsObstacle(b.x, b.y, 5)
-  );
+    if (
+      b.life <= 0 ||
+      b.x <= 0 ||
+      b.x >= ARENA_WIDTH ||
+      b.y <= 0 ||
+      b.y >= ARENA_HEIGHT ||
+      hitsObstacle(b.x, b.y, 5)
+    ) {
+      bullets.splice(i, 1);
+    }
+  }
 
   draw();
 
   requestAnimationFrame(loop);
 }
 
-// -------------------------------------
+// =====================================
 // DIBUJAR OBSTÁCULOS
-// -------------------------------------
+// =====================================
 
 function drawObstacles() {
-  obstacles.forEach(o => {
-    if (!o) return;
+  for (const o of obstacles) {
+    if (!o) continue;
 
     ctx.save();
 
     if (o.type === "crate") {
-      // Cajas
       ctx.fillStyle = "#9b6838";
       ctx.fillRect(o.x, o.y, o.w, o.h);
 
       ctx.strokeStyle = "#e2ad69";
       ctx.lineWidth = 3;
+
       ctx.strokeRect(
         o.x + 4,
         o.y + 4,
@@ -668,7 +716,6 @@ function drawObstacles() {
       o.type === "wall" ||
       o.type === "barrier"
     ) {
-      // Muros y barreras
       ctx.fillStyle =
         o.type === "wall" ? "#687887" : "#d0a34d";
 
@@ -676,10 +723,10 @@ function drawObstacles() {
 
       ctx.strokeStyle = "#293746";
       ctx.lineWidth = 3;
+
       ctx.strokeRect(o.x, o.y, o.w, o.h);
 
     } else if (o.type === "barrel") {
-      // Barriles
       ctx.fillStyle = "#b64b32";
       ctx.fillRect(o.x, o.y, o.w, o.h);
 
@@ -701,12 +748,12 @@ function drawObstacles() {
       ctx.stroke();
 
     } else if (o.type === "water") {
-      // Agua
       ctx.fillStyle = "#246b91";
       ctx.fillRect(o.x, o.y, o.w, o.h);
 
       ctx.strokeStyle = "#65c5e8";
       ctx.lineWidth = 3;
+
       ctx.strokeRect(o.x, o.y, o.w, o.h);
 
       ctx.beginPath();
@@ -717,7 +764,6 @@ function drawObstacles() {
       ctx.stroke();
 
     } else if (o.type === "rock") {
-      // Rocas
       ctx.fillStyle = "#778078";
 
       ctx.beginPath();
@@ -736,25 +782,27 @@ function drawObstacles() {
 
       ctx.strokeStyle = "#b6c0b5";
       ctx.lineWidth = 3;
+
       ctx.stroke();
     }
 
     ctx.restore();
-  });
+  }
 }
 
-// -------------------------------------
+// =====================================
 // DIBUJAR MAPA Y JUGADORES
-// -------------------------------------
+// =====================================
 
 function draw() {
-  // Fondo
   ctx.clearRect(
     0,
     0,
     ARENA_WIDTH,
     ARENA_HEIGHT
   );
+
+  // Fondo.
 
   ctx.fillStyle = "#101a25";
 
@@ -765,33 +813,32 @@ function draw() {
     ARENA_HEIGHT
   );
 
-  // Cuadrícula
+  // Cuadrícula.
+
   ctx.strokeStyle = "#1c2b3b";
   ctx.lineWidth = 1;
 
-  for (let x = 0; x < ARENA_WIDTH; x += 40) {
-    ctx.beginPath();
+  ctx.beginPath();
 
+  for (let x = 0; x < ARENA_WIDTH; x += 40) {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, ARENA_HEIGHT);
-
-    ctx.stroke();
   }
 
   for (let y = 0; y < ARENA_HEIGHT; y += 40) {
-    ctx.beginPath();
-
     ctx.moveTo(0, y);
     ctx.lineTo(ARENA_WIDTH, y);
-
-    ctx.stroke();
   }
 
-  // Obstáculos
+  ctx.stroke();
+
+  // Obstáculos.
+
   drawObstacles();
 
-  // Balas
-  bullets.forEach(b => {
+  // Balas.
+
+  for (const b of bullets) {
     ctx.fillStyle = b.color || "#ffffff";
 
     ctx.beginPath();
@@ -805,23 +852,29 @@ function draw() {
     );
 
     ctx.fill();
-  });
+  }
 
-  // Tanques
-  players.filter(p => p.alive).forEach(p => {
+  // Tanques.
+
+  for (const p of players) {
+    if (!p.alive) continue;
+
     ctx.save();
 
     ctx.translate(p.x, p.y);
     ctx.rotate(p.angle);
 
-    // Cuerpo
+    // Cuerpo.
+
     ctx.fillStyle = p.color;
     ctx.fillRect(-13, -10, 26, 20);
 
-    // Cañón
+    // Cañón.
+
     ctx.fillRect(4, -3, 20, 6);
 
-    // Torreta
+    // Torreta.
+
     ctx.fillStyle = "#0b1018";
 
     ctx.beginPath();
@@ -838,7 +891,8 @@ function draw() {
 
     ctx.restore();
 
-    // Nombre del jugador
+    // Nombre.
+
     ctx.fillStyle = "#eaf0f6";
     ctx.font = "12px Inter";
     ctx.textAlign = "center";
@@ -848,5 +902,5 @@ function draw() {
       p.x,
       p.y - 20
     );
-  });
+  }
 }
