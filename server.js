@@ -885,8 +885,8 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `Tank Battle listo en http://localhost:${PORT}`
+    `Tank Battle listo en el puerto ${PORT}`
   );
 });
