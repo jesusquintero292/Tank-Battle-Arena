@@ -463,7 +463,7 @@ io.on("connection", socket => {
 
     if (!room || room.hostId !== socket.id) return;
 
-    if (room.players.size < 1) {
+    if (room.players.size < 2) {
       return;
     }
 
