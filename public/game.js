@@ -502,6 +502,7 @@ if (myTank && myTank.alive) {
   draw();
   requestAnimationFrame(loop);
 }
+}
 
 // =====================================
 // RENDERIZADO
