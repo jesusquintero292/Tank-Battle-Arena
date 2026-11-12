@@ -1,4 +1,3 @@
-
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -109,12 +108,15 @@ const ROUND_OBSTACLES = [
 
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code;
+  let code = "";
+  let attempts = 0;
 
   do {
     code = Array.from({ length: 5 }, () =>
       chars[Math.floor(Math.random() * chars.length)]
     ).join("");
+    attempts++;
+    if (attempts > 100) break;
   } while (rooms.has(code));
 
   return code;
@@ -363,54 +365,51 @@ io.on("connection", socket => {
   console.log("Usuario conectado:", socket.id);
 
   // CREAR SALA: ADMINISTRADOR ESPECTADOR
-
   socket.on("room:create", ({ name } = {}) => {
-    const cleanName =
-      String(name || "Administrador").trim().slice(0, 16) || "Administrador";
+    try {
+      const cleanName =
+        String(name || "Administrador").trim().slice(0, 16) || "Administrador";
 
-    const code = makeCode();
+      const code = makeCode();
 
-    const room = {
-      code,
-      hostId: socket.id,
-      hostName: cleanName,
-      status: "lobby",
-      round: 1,
-      winnerId: null,
-      players: new Map(),
-      bullets: [],
-      obstacles: [],
-      stateDirty: false,
-      colors: [
-        "#42d392",
-        "#54a6ff",
-        "#ffca58",
-        "#ff6b6b",
-        "#b78cff",
-        "#ff8ac7",
-        "#8bd3dd",
-        "#d5e56b"
-      ]
-    };
+      const room = {
+        code,
+        hostId: socket.id,
+        hostName: cleanName,
+        status: "lobby",
+        round: 1,
+        winnerId: null,
+        players: new Map(),
+        bullets: [],
+        obstacles: [],
+        stateDirty: false,
+        colors: [
+          "#42d392", "#54a6ff", "#ffca58", "#ff6b6b",
+          "#b78cff", "#ff8ac7", "#8bd3dd", "#d5e56b"
+        ]
+      };
 
-    rooms.set(code, room);
+      rooms.set(code, room);
 
-    socket.join(code);
-    socket.data.roomCode = code;
-    socket.data.isHost = true;
+      socket.join(code);
+      socket.data.roomCode = code;
+      socket.data.isHost = true;
 
-    socket.emit("room:joined", {
-      code,
-      host: true,
-      playerId: socket.id,
-      spectator: true
-    });
+      socket.emit("room:joined", {
+        code,
+        host: true,
+        playerId: socket.id,
+        spectator: true
+      });
 
-    emitRoom(room);
+      emitRoom(room);
+    } catch (err) {
+      console.error("Error al crear sala:", err);
+      socket.emit("error:message", "Error interno al crear la sala.");
+    }
   });
 
   // UNIRSE COMO JUGADOR
-
   socket.on("room:join", ({ code, name } = {}) => {
     const normalized = String(code || "").trim().toUpperCase();
     const room = rooms.get(normalized);
@@ -459,49 +458,38 @@ io.on("connection", socket => {
   });
 
   // INICIAR PARTIDA
+  socket.on("game:start", () => {
+    const room = rooms.get(socket.data.roomCode);
 
-socket.on("game:start", () => {
-  const room = rooms.get(socket.data.roomCode);
+    if (!room || room.hostId !== socket.id) return;
 
-  if (!room || room.hostId !== socket.id) return;
-
-  // Permitir iniciar si hay al menos 1 jugador (o 2 según prefieras) 
-  // y la sala está en estado de lobby o finalizada.
-  if (room.players.size < 1) {
-    return;
-  }
-
-  room.round = 1;
-
-  for (const player of room.players.values()) {
-    player.score = 0;
-  }
-
-  startRound(room);
-});
-
-  // MOVIMIENTO: RECIBIR POSICIONES SIN EMITIR INMEDIATAMENTE
-
-  socket.on("player:state", state => {
-    const x = Math.max(
-      TANK_RADIUS,
-      Math.min(WIDTH - TANK_RADIUS, rawX)
-    );
-
-    const y = Math.max(
-      TANK_RADIUS,
-      Math.min(HEIGHT - TANK_RADIUS, rawY)
-    );
-
-    // Permitir el movimiento de forma fluida sin rechazar por mínimos roces de red
-    player.x = x;
-    player.y = y;
-
-    if (Number.isFinite(rawAngle)) {
-      player.angle = rawAngle;
+    if (room.players.size < 1) {
+      return;
     }
 
-    markStatesDirty(room);
+    room.round = 1;
+
+    for (const player of room.players.values()) {
+      player.score = 0;
+    }
+
+    startRound(room);
+  });
+
+  // MOVIMIENTO: RECIBIR POSICIONES (FLUIDO SIN TIRONES)
+  socket.on("player:state", state => {
+    const room = rooms.get(socket.data.roomCode);
+
+    if (!room || room.status !== "playing" || !state) return;
+
+    const player = room.players.get(socket.id);
+
+    if (!player || !player.alive) return;
+
+    const now = Date.now();
+
+    if (now - player.lastStateAt < PLAYER_STATE_MIN_INTERVAL) {
+      return;
     }
 
     player.lastStateAt = now;
@@ -513,19 +501,18 @@ socket.on("game:start", () => {
     if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return;
 
     const x = Math.max(
-      TANK_RADIUS + 7,
-      Math.min(WIDTH - TANK_RADIUS - 7, rawX)
+      TANK_RADIUS,
+      Math.min(WIDTH - TANK_RADIUS, rawX)
     );
 
     const y = Math.max(
-      TANK_RADIUS + 7,
-      Math.min(HEIGHT - TANK_RADIUS - 7, rawY)
+      TANK_RADIUS,
+      Math.min(HEIGHT - TANK_RADIUS, rawY)
     );
 
-    if (!blocked(room, x, y, TANK_RADIUS)) {
-      player.x = x;
-      player.y = y;
-    }
+    // Asignación directa y fluida para evitar rechazos bruscos por red
+    player.x = x;
+    player.y = y;
 
     if (Number.isFinite(rawAngle)) {
       player.angle = rawAngle;
@@ -535,7 +522,6 @@ socket.on("game:start", () => {
   });
 
   // DISPARAR
-
   socket.on("player:shoot", bullet => {
     const room = rooms.get(socket.data.roomCode);
 
@@ -567,10 +553,6 @@ socket.on("game:start", () => {
       life: 2
     };
 
-    if (blocked(room, newBullet.x, newBullet.y, BULLET_RADIUS)) {
-      return;
-    }
-
     room.bullets.push(newBullet);
 
     io.to(room.code).emit("game:bullet", {
@@ -584,7 +566,6 @@ socket.on("game:start", () => {
   });
 
   // MOSTRAR PREGUNTA
-
   socket.on("question:show", question => {
     const room = rooms.get(socket.data.roomCode);
 
@@ -600,7 +581,6 @@ socket.on("game:start", () => {
   });
 
   // RESULTADO DE LA PREGUNTA
-
   socket.on("question:result", ({ correct, elapsed } = {}) => {
     const room = rooms.get(socket.data.roomCode);
 
@@ -638,7 +618,6 @@ socket.on("game:start", () => {
   });
 
   // DESCONECTAR
-
   socket.on("disconnect", () => {
     console.log("Usuario desconectado:", socket.id);
 
@@ -732,7 +711,6 @@ setInterval(() => {
       let playerHit = false;
 
       // Obstáculos
-
       for (const obstacle of room.obstacles) {
         if (
           segmentHitsRect(
@@ -750,7 +728,6 @@ setInterval(() => {
       }
 
       // Tanques
-
       if (!removeBullet) {
         for (const target of room.players.values()) {
           if (
