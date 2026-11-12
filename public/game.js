@@ -17,7 +17,6 @@ const TANK_RADIUS = 17;
 const TANK_SPEED = 135;
 const ROTATION_SPEED = 2.2;
 
-// Optimización: Subimos ligeramente a 70ms para aliviar la carga del servidor gratuito de Render
 const STATE_SEND_INTERVAL = 70; 
 const MAX_FRAME_TIME = 0.04;
 
@@ -216,13 +215,10 @@ socket.on("game:started", () => {
   requestAnimationFrame(loop);
 });
 
-// Recibir posiciones de los tanques con interpolación suave
 socket.on("game:states", states => {
-  // Actualizamos manteniendo una interpolación ligera para evitar saltos bruscos
   players = states.map(incoming => {
     const existing = players.find(p => p.id === incoming.id);
     if (existing && incoming.id !== playerId) {
-      // Suavizado lineal básico (Lerp) para la posición de los oponentes
       return {
         ...incoming,
         x: existing.x + (incoming.x - existing.x) * 0.4,
@@ -452,37 +448,40 @@ document.addEventListener("visibilitychange", () => {
 // BUCLE PRINCIPAL
 // =====================================
 
-if (myTank && myTank.alive) {
-  if (moveHeld) {
-    myTank.angle = moveAngle;
-    const nextX = myTank.x + Math.cos(moveAngle) * TANK_SPEED * dt;
-    const nextY = myTank.y + Math.sin(moveAngle) * TANK_SPEED * dt;
+function loop(now) {
+  if (!running) return;
 
-    // Validación local inmediata para fluidez total
-    if (!hitsObstacle(nextX, nextY, TANK_RADIUS)) {
-      myTank.x = nextX;
-      myTank.y = nextY;
+  const dt = Math.min(MAX_FRAME_TIME, Math.max(0, (now - lastTime) / 1000));
+  lastTime = now;
+
+  if (myTank && myTank.alive) {
+    if (moveHeld) {
+      myTank.angle = moveAngle;
+      const nextX = myTank.x + Math.cos(moveAngle) * TANK_SPEED * dt;
+      const nextY = myTank.y + Math.sin(moveAngle) * TANK_SPEED * dt;
+
+      if (!hitsObstacle(nextX, nextY, TANK_RADIUS)) {
+        myTank.x = nextX;
+        myTank.y = nextY;
+      }
+    } else {
+      myTank.angle += rotationDirection * ROTATION_SPEED * dt;
     }
-  } else {
-    myTank.angle += rotationDirection * ROTATION_SPEED * dt;
+
+    myTank.x = Math.max(24, Math.min(ARENA_WIDTH - 24, myTank.x));
+    myTank.y = Math.max(24, Math.min(ARENA_HEIGHT - 24, myTank.y));
+
+    if (now - lastStateSent >= STATE_SEND_INTERVAL) {
+      socket.emit("player:state", {
+        x: myTank.x,
+        y: myTank.y,
+        angle: myTank.angle,
+        direction: rotationDirection
+      });
+      lastStateSent = now;
+    }
   }
 
-  myTank.x = Math.max(24, Math.min(ARENA_WIDTH - 24, myTank.x));
-  myTank.y = Math.max(24, Math.min(ARENA_HEIGHT - 24, myTank.y));
-
-  // Enviar estado al servidor sin saturar
-  if (now - lastStateSent >= STATE_SEND_INTERVAL) {
-    socket.emit("player:state", {
-      x: myTank.x,
-      y: myTank.y,
-      angle: myTank.angle,
-      direction: rotationDirection
-    });
-    lastStateSent = now;
-  }
-}
-
-  // Actualizar balas locales de forma fluida
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.x += b.vx * dt;
@@ -501,7 +500,6 @@ if (myTank && myTank.alive) {
 
   draw();
   requestAnimationFrame(loop);
-}
 }
 
 // =====================================
