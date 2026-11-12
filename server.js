@@ -460,27 +460,25 @@ io.on("connection", socket => {
 
   // INICIAR PARTIDA
 
-  socket.on("game:start", () => {
-    const room = rooms.get(socket.data.roomCode);
+socket.on("game:start", () => {
+  const room = rooms.get(socket.data.roomCode);
 
-    if (!room || room.hostId !== socket.id) return;
+  if (!room || room.hostId !== socket.id) return;
 
-    if (
-      (room.status !== "lobby" && room.status !== "finished") ||
-      room.players.size < 2 ||
-      room.players.size > MAX_PLAYERS
-    ) {
-      return;
-    }
+  // Permitir iniciar si hay al menos 1 jugador (o 2 según prefieras) 
+  // y la sala está en estado de lobby o finalizada.
+  if (room.players.size < 1) {
+    return;
+  }
 
-    room.round = 1;
+  room.round = 1;
 
-    for (const player of room.players.values()) {
-      player.score = 0;
-    }
+  for (const player of room.players.values()) {
+    player.score = 0;
+  }
 
-    startRound(room);
-  });
+  startRound(room);
+});
 
   // MOVIMIENTO: RECIBIR POSICIONES SIN EMITIR INMEDIATAMENTE
 
