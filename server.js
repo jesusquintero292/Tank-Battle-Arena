@@ -483,18 +483,25 @@ socket.on("game:start", () => {
   // MOVIMIENTO: RECIBIR POSICIONES SIN EMITIR INMEDIATAMENTE
 
   socket.on("player:state", state => {
-    const room = rooms.get(socket.data.roomCode);
+    const x = Math.max(
+      TANK_RADIUS,
+      Math.min(WIDTH - TANK_RADIUS, rawX)
+    );
 
-    if (!room || room.status !== "playing" || !state) return;
+    const y = Math.max(
+      TANK_RADIUS,
+      Math.min(HEIGHT - TANK_RADIUS, rawY)
+    );
 
-    const player = room.players.get(socket.id);
+    // Permitir el movimiento de forma fluida sin rechazar por mínimos roces de red
+    player.x = x;
+    player.y = y;
 
-    if (!player || !player.alive) return;
+    if (Number.isFinite(rawAngle)) {
+      player.angle = rawAngle;
+    }
 
-    const now = Date.now();
-
-    if (now - player.lastStateAt < PLAYER_STATE_MIN_INTERVAL) {
-      return;
+    markStatesDirty(room);
     }
 
     player.lastStateAt = now;
