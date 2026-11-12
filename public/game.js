@@ -452,40 +452,35 @@ document.addEventListener("visibilitychange", () => {
 // BUCLE PRINCIPAL
 // =====================================
 
-function loop(now) {
-  if (!running) return;
+if (myTank && myTank.alive) {
+  if (moveHeld) {
+    myTank.angle = moveAngle;
+    const nextX = myTank.x + Math.cos(moveAngle) * TANK_SPEED * dt;
+    const nextY = myTank.y + Math.sin(moveAngle) * TANK_SPEED * dt;
 
-  const dt = Math.min(MAX_FRAME_TIME, Math.max(0, (now - lastTime) / 1000));
-  lastTime = now;
-
-  if (myTank && myTank.alive) {
-    if (moveHeld) {
-      myTank.angle = moveAngle;
-      const nextX = myTank.x + Math.cos(moveAngle) * TANK_SPEED * dt;
-      const nextY = myTank.y + Math.sin(moveAngle) * TANK_SPEED * dt;
-
-      if (!hitsObstacle(nextX, nextY, TANK_RADIUS)) {
-        myTank.x = nextX;
-        myTank.y = nextY;
-      }
-    } else {
-      myTank.angle += rotationDirection * ROTATION_SPEED * dt;
+    // Validación local inmediata para fluidez total
+    if (!hitsObstacle(nextX, nextY, TANK_RADIUS)) {
+      myTank.x = nextX;
+      myTank.y = nextY;
     }
-
-    myTank.x = Math.max(24, Math.min(ARENA_WIDTH - 24, myTank.x));
-    myTank.y = Math.max(24, Math.min(ARENA_HEIGHT - 24, myTank.y));
-
-    // Envío controlado optimizado para evitar congestión en Render
-    if (now - lastStateSent >= STATE_SEND_INTERVAL) {
-      socket.emit("player:state", {
-        x: Math.round(myTank.x),
-        y: Math.round(myTank.y),
-        angle: Number(myTank.angle.toFixed(2)),
-        direction: rotationDirection
-      });
-      lastStateSent = now;
-    }
+  } else {
+    myTank.angle += rotationDirection * ROTATION_SPEED * dt;
   }
+
+  myTank.x = Math.max(24, Math.min(ARENA_WIDTH - 24, myTank.x));
+  myTank.y = Math.max(24, Math.min(ARENA_HEIGHT - 24, myTank.y));
+
+  // Enviar estado al servidor sin saturar
+  if (now - lastStateSent >= STATE_SEND_INTERVAL) {
+    socket.emit("player:state", {
+      x: myTank.x,
+      y: myTank.y,
+      angle: myTank.angle,
+      direction: rotationDirection
+    });
+    lastStateSent = now;
+  }
+}
 
   // Actualizar balas locales de forma fluida
   for (let i = bullets.length - 1; i >= 0; i--) {
