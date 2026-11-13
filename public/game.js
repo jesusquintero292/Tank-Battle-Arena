@@ -250,6 +250,7 @@ socket.on("game:states", states => {
       `RONDA ${currentRound}/${TOTAL_ROUNDS} · ${players.filter(p => p.alive).length} ALIVE`;
   }
 });
+}
 
 socket.on("game:bullet", b => {
   bullets.push({ ...b, life: 2 });
