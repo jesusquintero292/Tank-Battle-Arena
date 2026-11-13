@@ -219,14 +219,29 @@ socket.on("game:states", states => {
   players = states.map(incoming => {
     const existing = players.find(p => p.id === incoming.id);
     if (existing && incoming.id !== playerId) {
+      // Suavizado lineal tanto para posición como para el ángulo de giro
+      let angleDiff = incoming.angle - existing.angle;
+      // Normalizar la diferencia de ángulo para evitar giros locos de 360 grados
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
       return {
         ...incoming,
         x: existing.x + (incoming.x - existing.x) * 0.4,
         y: existing.y + (incoming.y - existing.y) * 0.4,
+        angle: existing.angle + angleDiff * 0.4
       };
     }
     return incoming;
   });
+
+  myTank = players.find(p => p.id === playerId) || null;
+
+  if (myTank) {
+    $("aliveCount").textContent =
+      `RONDA ${currentRound}/${TOTAL_ROUNDS} · ${players.filter(p => p.alive).length} ALIVE`;
+  }
+});
 
   myTank = players.find(p => p.id === playerId) || null;
 
